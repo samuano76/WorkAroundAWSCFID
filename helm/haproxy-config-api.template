@@ -519,18 +519,10 @@ backend {{ genBackendNamePrefix $cfg.TLSTermination }}:{{ $cfgIdx }}
         {{- with $value := clipHAProxyTimeoutValue (firstMatch $timeSpecPattern (index $cfg.Annotations "haproxy.router.openshift.io/timeout-tunnel")) }}
   timeout tunnel  {{ $value }}
         {{- end }}
-
-        {{- if and (eq (index $cfg.Annotations "haproxy.router.openshift.io/azure-front-door-id") "") (eq (index $cfg.Annotations "haproxy.router.openshift.io/aws-cloud-front-id") "") (eq (env "ROUTE_LABELS") "type=sharded")}}
-  http-request deny
-        {{- end }}
-
-        {{- with $azureFrontDoorAnnotation := index $cfg.Annotations "haproxy.router.openshift.io/azure-front-door-id" }}
-  acl azurefrontdoor req.hdr(X-Azure-FDID) -m str {{ $azureFrontDoorAnnotation }}
-  http-request deny unless azurefrontdoor
-        {{- end }}
-
-        {{- with $awsCloudFrontAnnotation := index $cfg.Annotations "haproxy.router.openshift.io/aws-cloud-front-id" }}
-  acl awscloudfront req.hdr(X-Aws-CFID) -m str {{ $awsCloudFrontAnnotation }}
+        {{- $hname := env "HEADER_NAME" }}
+        {{- $hvalue := env "HEADER_VALUE" }}
+        {{- if isTrue (env "HEADER_MANAGE") }}
+  acl awscloudfront req.hdr({{ $hname }}) -m str {{ $hvalue }}
   http-request deny unless awscloudfront
         {{- end }}
 
