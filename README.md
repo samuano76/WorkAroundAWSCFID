@@ -1,4 +1,4 @@
-## How to secure OpenShift routes exposed through an Azure Front-Door
+## How to secure OpenShift routes exposed through an Aws Cloud Front
 
 When you are using an Azure Front Door with public IP address-based origins, you should ensure that traffic flows through your Front Door instance.
 Microsoft Azure documentation instructs to use two tecniques in order to make sure that the traffic origns from the proper Front Door:
