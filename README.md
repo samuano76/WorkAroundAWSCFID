@@ -1,15 +1,13 @@
 ## How to secure OpenShift routes exposed through an Aws Cloud Front
 
-When you are using an Azure Front Door with public IP address-based origins, you should ensure that traffic flows through your Front Door instance.
-Microsoft Azure documentation instructs to use two tecniques in order to make sure that the traffic origns from the proper Front Door:
+When you are using an Aws Cloud Front Front Door with public IP address-based origins, you should ensure that traffic flows through your Cloud Front instance.
+Aws documentation instructs how to make sure that the traffic origns from the proper Cloud Front:
 
-- [IP Address filtering](https://learn.microsoft.com/en-us/azure/frontdoor/origin-security?tabs=app-service-functions&pivots=front-door-standard-premium#ip-address-filtering), basically is to use the `AzureFrontDoor.Backend` service tag to coinfigure the network security group rules
-- [Front Door Identifier](https://learn.microsoft.com/en-us/azure/frontdoor/origin-security?tabs=app-service-functions&pivots=front-door-standard-premium#front-door-identifier) When Front Door makes a request to your origin, it adds the `X-Azure-FDID` request header. Your origin should inspect the header on incoming requests, and reject requests where the value doesn't match your Front Door profile's identifier.
+- [Cloud Front Identifier](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/add-origin-custom-headers.html) When Cloud Front makes a request to your origin, it adds the custom header (es. `X-Aws-CFID`) request header. Your origin should inspect the header on incoming requests, and reject requests where the value doesn't match your Cloud Front profile's identifier.
 
-When an Azure Front Door with public IP address-based origins is used, Microsoft suggests to use **both** mentioned methods above.
+When an Aws Cloud Front with public IP address-based origins is used, Aws suggests to use mentioned method above.
 
-The IP Address filtering can be performed at the cloud infrastructure level, as documented by Microsot.
-The Cloud Front Identifier must be verified at the application level checking the HTTP header `X-Aws-CFID`.
+The Cloud Front Identifier must be verified at the application level checking the HTTP custom header (es. `X-Aws-CFID`).
 
 At the moment of writing Red Hat OpenShift does not provide any feature to check the Cloud Front Identifier, thus the check should be delegated to the application itself or an API Gateway in front of the cluster.
 
@@ -72,7 +70,7 @@ $ oc expose svc cakephp-ex --hostname ${ROUTE_HOSTNAME}
 3. Annotate the route in order to be secured: 
 
 ```
-$ oc annotate route cakephp-ex haproxy.router.openshift.io/azure-front-door-id=1234
+$ oc annotate route cakephp-ex haproxy.router.openshift.io/aws-cloud-front-id=1234
 ```
 
 4. Optional: in case you are using a shard, you will need to annotate the route in order to "land" on the proper router instance, `type=shard` is just an example here, the label must match the `routeSelector` of the shard:
@@ -83,12 +81,12 @@ $ oc label route cakephp-ex -n cakephp-ex type=sharded
 
 ### Tesing the application
 
-If the `haproxy.router.openshift.io/azure-front-door-id` annotation is present and you are not sendig the header `X-Azure-FDID` with a proper value you must get a `403 Forbidden`.
+If the `haproxy.router.openshift.io/aws-cloud-front-id` annotation is present and you are not sendig the header `X-Aws-CFID` with a proper value you must get a `403 Forbidden`.
 
 The following curl command should work with the annotation in the example above.
 
 ```
-curl -H 'X-Azure-FDID: 1234' http://${ROUTE_HOSTNAME}
+curl -H 'X-Aws-CFID: 1234' http://${ROUTE_HOSTNAME}
 ```
 
 ## Creating an unmanaged router shard
@@ -241,9 +239,9 @@ oc patch clusterversion version --type json -p "$(cat version-patch.yaml)"
 oc scale deploy -n openshift-ingress-operator ingress-operator --replicas 0
 ```
 
-### Router customization in order to secure requests coming from an Azure Front Door
+### Router customization in order to secure requests coming from an Aws Cloud Front
 
-**ACTION GOAL:** apply the HAProxy template customizations in order to secure Fron Door requests as per Microsoft instructions.
+**ACTION GOAL:** apply the HAProxy template customizations in order to secure Fron Door requests as per Aws instructions.
 
 1. Get the deployments names:
 
@@ -268,9 +266,19 @@ oc rsh -n openshift-ingress deploy/${ROUTER_NAME} cat haproxy-config.template > 
          {{- with $value := clipHAProxyTimeoutValue (firstMatch $timeSpecPattern (index $cfg.Annotations "haproxy.router.openshift.io/timeout-tunnel")) }}
    timeout tunnel  {{ $value }}
          {{- end }}
+
++        {{- if and (eq (index $cfg.Annotations "haproxy.router.openshift.io/azure-front-door-id") "") (eq (index $cfg.Annotations "haproxy.router.openshift.io/aws-cloud-front-+id") "") (eq (env "ROUTE_LABELS") "type=sharded")}}
++  http-request deny
++        {{- end }}
+
 +        {{- with $azureFrontDoorAnnotation := index $cfg.Annotations "haproxy.router.openshift.io/azure-front-door-id" }}
 +  acl azurefrontdoor req.hdr(X-Azure-FDID) -m str {{ $azureFrontDoorAnnotation }}
 +  http-request deny unless azurefrontdoor
++        {{- end }}
+
++        {{- with $awsCloudFrontAnnotation := index $cfg.Annotations "haproxy.router.openshift.io/aws-cloud-front-id" }}
++  acl awscloudfront req.hdr(X-Aws-CFID) -m str {{ $awsCloudFrontAnnotation }}
++  http-request deny unless awscloudfront
 +        {{- end }}
  
          {{- if isTrue (index $cfg.Annotations "haproxy.router.openshift.io/rate-limit-connections") }}
@@ -293,123 +301,4 @@ oc -n openshift-ingress set volume deploy/${ROUTER_NAME} --add --overwrite --nam
 
 ```
 oc -n openshift-ingress set env deploy/${ROUTER_NAME} TEMPLATE_FILE=/var/lib/haproxy/conf/custom/haproxy-config.template
-```
-
-## DNS Management
-
-If you replace the default ingress router and the LoadBalancer service exposing the router is not deleted/re-created a DNS record resolving the widcard domain should be already availabe.
-
-In case you are deploying the custom router as a shard you will need to create the DNS record for the shard wildcard domain.
-When the LoadBalancer service exposing the router is deleted and re-created the DNS record must be updated with the proper public load balancer IP address.
-
-A solution to automate the management of the wildcard DNS record is to use the [External DNS operator](https://docs.openshift.com/container-platform/4.10/networking/external_dns_operator/understanding-external-dns-operator.html).
-
-**NOTE:** Azure DNS zone management with External DNS Operator is Technology Preview on OpenShift 4.10, and Generally Available in 4.11.
-
-1. Create the External DNS namespace:
-
-```
-$ oc create ns external-dns
-```
-
-2. Apply the needed RBAC:
-
-```
-$ oc apply -f https://raw.githubusercontent.com/openshift/external-dns-operator/release-0.1/config/rbac/extra-roles.yaml
-```
-
-3. Install the ExternalDNS operator:
-
-```
-$ oc create ns external-dns-operator
-
-$ cat << EOF | oc apply -f -
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: external-dns-operator
-  namespace: external-dns-operator
-spec:
-  targetNamespaces:
-  - external-dns-operator
-EOF
-
-$ cat << EOF | oc apply -f -
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: external-dns-operator
-  namespace: external-dns-operator
-spec:
-  channel: alpha
-  installPlanApproval: Automatic
-  name: external-dns-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-EOF
-```
-
-4. Fetch the values from azure-credentials secret present in kube-system namespace.
-
-```
-$ CLIENT_ID=$(oc get secrets azure-credentials  -n kube-system  --template={{.data.azure_client_id}} | base64 -d)
-$ CLIENT_SECRET=$(oc get secrets azure-credentials  -n kube-system  --template={{.data.azure_client_secret}} | base64 -d)
-$ RESOURCE_GROUP=$(oc get secrets azure-credentials  -n kube-system  --template={{.data.azure_resourcegroup}} | base64 -d)
-$ SUBSCRIPTION_ID=$(oc get secrets azure-credentials  -n kube-system  --template={{.data.azure_subscription_id}} | base64 -d)
-$ TENANT_ID=$(oc get secrets azure-credentials  -n kube-system  --template={{.data.azure_tenant_id}} | base64 -d)
-```
-
-5. Login with the `az` CLI
-
-```
-$ az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
-```
-
-6. Get the list of the DNS zones
-
-```
-$ az network dns zone list --resource-group $RESOURCE_GROUP
-```
-
-7. If the DNS zone for the shard is not present, create it:
-
-```
-$ az network dns zone create --resource-group  $RESOURCE_GROUP --name ${INGRESS_FQDN}
-```
-
-7. Create the `ExternalDNS` resource (replace the `spec.zone` field with the proper zone ID from the previous command)
-
-```
-$ cat << EOF | oc apply -f -
-apiVersion: externaldns.olm.openshift.io/v1alpha1
-kind: ExternalDNS
-metadata:
-  name: shard-wildcard-azure
-spec:
-  zones:
-  - "/subscriptions/XXXX/resourceGroups/YYYY-rg/providers/Microsoft.Network/dnszones/sharded-apps.ocp.example.com"
-  provider:
-    type: Azure
-  domains:
-  - name: azure.opentlc.com
-    filterType: Include
-    matchType: Exact
-  source:
-    type: Service 
-    service:
-      serviceType:
-        - LoadBalancer
-    labelFilter: 
-      matchLabels:
-        external-dns.sharded-widcard/publish: "yes"
-    hostnameAnnotation: "Allow"
-    fqdnTemplate:
-    - '*.sharded-apps.ocp.example.com'
-EOF
-```
-
-8. Apply the label to service in order to create the DNS records:
-
-```
-$ oc label svc -n openshift-ingress router-sharded-custom-oc-router external-dns.sharded-widcard/publish=yes
 ```
