@@ -9,15 +9,15 @@ Microsoft Azure documentation instructs to use two tecniques in order to make su
 When an Azure Front Door with public IP address-based origins is used, Microsoft suggests to use **both** mentioned methods above.
 
 The IP Address filtering can be performed at the cloud infrastructure level, as documented by Microsot.
-The Front Door Identifier must be verified at the application level checking the HTTP header `X-Azure-FDID`.
+The Cloud Front Identifier must be verified at the application level checking the HTTP header `X-Aws-CFID`.
 
-At the moment of writing Red Hat OpenShift does not provide any feature to check the Front Door Identifier, thus the check should be delegated to the application itself or an API Gateway in front of the cluster.
+At the moment of writing Red Hat OpenShift does not provide any feature to check the Cloud Front Identifier, thus the check should be delegated to the application itself or an API Gateway in front of the cluster.
 
-There is an RFE (ID RFE-3490) to implement the Front Door Identifier check directly into the ingress router:
-If a route is annotated with `haproxy.router.openshift.io/azure-front-door-id` only the requests with the corresponding `X-Azure-FDID` header are allowed.
-At the moment the RFE is targetting the OCP version 4.14.
+There is an RFE (ID RFE-4087) to implement the Cloud Front Identifier check directly into the ingress router:
+The Red Hat Engineering constraints about realization of an RFE on this topic are changed respect to that already accepted for the similar scenario on Azure FrontDoor, and now they require the use of Ingress Operator API.
+At the moment the RFE is without a defined timeline.
 
-Until the mentioned RFE is not implemented the only way to validate the Front Door Identifier at the OpenShift Ingress level is to deploy a customized router.
+Until the mentioned RFE is not implemented the only way to validate the Cloud Front Identifier at the OpenShift Ingress level is to deploy a customized router.
 The custom router will use a modified HAProxy configuration template that implements the feature.
 The customization applies an HAProxy ACL 
 
